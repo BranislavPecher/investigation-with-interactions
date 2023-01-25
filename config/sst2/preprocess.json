@@ -1,0 +1,48 @@
+{
+    "output_folder": "results/sst2",
+    "data": {
+        "source": "datasets",
+        "path": "glue",
+        "split": "sst2",
+        "keys": ["train", "validation"],
+        "data_fields": ["sentence"],
+        "label_field": "label"
+    },
+    "train_test_split": null,
+    "preprocessing": {
+        "transformers": [
+            {
+                "transformer": "ColumnsSelector",
+                "params": {
+                    "columns": ["sentence"]
+                }
+            },
+            {
+                "transformer": "NaNsFilter",
+                "params": {}
+            },
+            {
+                "transformer": "TextCleaner",
+                "params": {
+                    "columns": ["sentence"]
+                }
+            },
+            {
+                "transformer": "LowercaseTransformer",
+                "params": {
+                    "columns": ["sentence"]
+                }
+            },
+            {
+                "transformer": "BertTransformer",
+                "params": {
+                    "columns": ["sentence"],
+                    "size": 50
+                }
+            }
+        ],
+        "serialize_data": true
+    },
+    "modeling": {},
+    "evaluation": {}
+}

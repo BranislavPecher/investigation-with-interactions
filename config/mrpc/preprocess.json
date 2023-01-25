@@ -1,0 +1,56 @@
+{
+    "output_folder": "results/mrpc",
+    "data": {
+        "source": "datasets",
+        "path": "glue",
+        "split": "mrpc",
+        "keys": ["train", "validation", "test"],
+        "data_fields": ["sentence1", "sentence2"],
+        "label_field": "label"
+    },
+    "train_test_split": null,
+    "preprocessing": {
+        "transformers": [
+            {
+                "transformer": "TextConcatenate",
+                "params": {
+                    "output_column": "text",
+                    "columns": ["sentence1", "sentence2"],
+                    "separator": " "
+                }
+            },
+            {
+                "transformer": "ColumnsSelector",
+                "params": {
+                    "columns": ["text"]
+                }
+            },
+            {
+                "transformer": "NaNsFilter",
+                "params": {}
+            },
+            {
+                "transformer": "TextCleaner",
+                "params": {
+                    "columns": ["text"]
+                }
+            },
+            {
+                "transformer": "LowercaseTransformer",
+                "params": {
+                    "columns": ["text"]
+                }
+            },
+            {
+                "transformer": "BertTransformer",
+                "params": {
+                    "columns": ["text"],
+                    "size": 100
+                }
+            }
+        ],
+        "serialize_data": true
+    },
+    "modeling": {},
+    "evaluation": {}
+}

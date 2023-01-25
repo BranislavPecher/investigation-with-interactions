@@ -1,0 +1,70 @@
+{
+    "output_folder": "results/stability/cola/factors",
+    "use_timestamp_dir": false,
+    "preprocessing": {
+        "serialized_folder": "results/cola/data",
+        "load_test_data": false
+    },
+    "modeling": {
+        "meta_learning": true,
+        "investigation_type": "factors",
+        "factors": [
+            {
+                "name": "label_selection",
+                "count": 10
+            }
+        ],
+        "train_test_split": 0.2,
+        "train_valid_split": 0.2,
+        "labels_to_use": 1000,
+        "mitigations_strategies": {
+            "data_split": 10,
+            "label_selection": 10,
+            "repeated_runs": 10,
+            "repeated_evaluation": 10
+        },
+        "meta_learning_parameters": {
+            "num_batches": 66,
+            "num_epochs": 10,
+            "meta_lr": 0.01,
+            "base_lr": 0.2,
+            "meta_optimizer": "SGD",
+            "base_optimizer": "Adam",
+            "evaluation_batch": 128
+        },
+        "dataset_parameters": {
+            "num_shots": 5,
+            "num_shots_test": 15,
+            "num_tasks_per_batch": 2,
+            "max_sentence_length": 50,
+            "embedding_dimension": 768,
+            "num_classes": 2
+        },
+        "feature": "sentence_embedded",
+        "base_models": [
+            {
+                "model": "MetaSimpleCnnText",
+                "params": {
+                    "n_filters": 128,
+                    "filter_sizes": 5,
+                    "pool_size": 2,
+                    "hidden_size": 128,
+                    "loss_function": "cross_entropy"
+                }
+            }
+        ],
+        "meta_models": [
+            {
+                "model": "Reptile",
+                "params": {
+                    "meta_optimizer": "SGD",
+                    "base_optimizer": "Adam",
+                    "inner_iterations": 1
+                }
+            }
+        ],
+        "serialize_best_models": true,
+        "use_gpu": true
+    },
+    "evaluation": {}
+}

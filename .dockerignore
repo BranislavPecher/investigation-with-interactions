@@ -1,0 +1,12 @@
+data
+serialized
+results
+
+.idea
+.vscode
+.git
+.env
+.venv
+.ipynb_checkpoints
+__pycache__
+.pytest_cache

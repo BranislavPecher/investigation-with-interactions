@@ -1,0 +1,20 @@
+__pycache__/
+.idea
+.vscode
+.ipynb_checkpoints
+.env
+.venv
+venv
+
+# Data and serialized files
+data
+serialized
+results
+logs
+
+# Config
+config/*
+!config/*.example.*
+!config/sst2
+!config/cola
+!config/mrpc
