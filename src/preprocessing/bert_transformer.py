@@ -50,7 +50,7 @@ class BertTransformer(TransformerMixin):
         for column in self.columns:
             embeddings = self.calculate_embeddings_from_texts_(df[column])
             df[f'{column}_embedded'] = embeddings
-            df.drop([column], axis=1, inplace=True)
+            # df.drop([column], axis=1, inplace=True)
         return df
 
     def calculate_embeddings_from_texts_(self, texts: str):
