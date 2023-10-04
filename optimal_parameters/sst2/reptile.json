@@ -1,0 +1,13 @@
+{
+    "num_shots": 5,
+    "num_shots_test": 15,
+    "num_tasks": 10,
+    "num_batches": 62,
+    "num_epochs": 5,
+    "meta_lr": 0.005,
+    "lr": 0.4,
+    "meta_optimizer": "SGD",
+    "base_optimizer": "Adam",
+    "inner_iterations": 1,
+    "evaluation_batch": 128
+}

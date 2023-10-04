@@ -1,0 +1,10 @@
+{
+    "num_shots": 5,
+    "num_shots_test": 15,
+    "num_tasks": 4,
+    "num_batches": 32,
+    "num_epochs": 5,
+    "meta_lr": 0.0001,
+    "meta_optimizer": "SGD",
+    "evaluation_batch": 128
+}
