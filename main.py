@@ -1,8 +1,7 @@
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments
 from datasets import Dataset
-# from data import SST2ICLDataset
 from data import ICLDataset, FineTuningDataset, DatasetLoader, PromptDataset, SimilarityICLDataset, InstructionTuningDataset, MetaLearningDataset
-from transfer_learning.models import BERTBase, RoBERTaBase
+from transfer_learning.models import BERTBase, RoBERTaBase, LoRABERTBase, LoRARoBERTaBase
 from meta_learning import MAML, FOMAML, Reptile, MetaLearner, ProtoNetMeta, MetaSimpleCnnText, MetaSimpleCnnTextProto, DenseClassifier
 import random
 import pickle
@@ -19,14 +18,65 @@ import torch.nn.functional as F
 
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 
+def parse_results(text, classes):
+    pred = -1
+    if DATASET in ['cola', 'mrpc'] and PROMPT_FORMAT in [3]:
+        for idx, cls in enumerate(classes):
+            if (cls.lower() in text.lower()) or (str(idx) in text):
+                pred = idx
+                break
+    else:
+        for idx, cls in enumerate(classes):
+            if (cls.lower() in text.lower()) or (str(idx) in text):
+                if pred == -1:
+                    pred = idx
+                else:
+                    pred = -1
+                    break
+    return pred
+
+
 def run_flan_t5(dataset, model, tokenizer):
+    instructions = dataset.instructions
+    context_samples = dataset.context_samples
+    if PROMPT_FORMAT == 0:
+        prompt = ''
+        prompt += f'{instructions["instruction"]}\n'
+        for sample in context_samples:
+            prompt += f'{instructions["sentence_start"]}: {sample[0].strip()}\n{instructions["answer_start"]}: {sample[1].strip()}\n'
+    elif DATASET == 'snips' and PROMPT_FORMAT == 3:
+        prompt = ''
+        for sample in context_samples:
+            prompt += f'User: {sample[0].strip()}\n{instructions["instruction"]} {sample[1].strip()}\n'
+    else:
+        prompt = ''
+        for sample in context_samples:
+            prompt += f'{sample[0].strip()}\n{instructions["instruction"]} {sample[1].strip()}\n'
     golden = []
     predicted = []
     for data, labels in dataset.batch_data_for_evaluation(BATCH_SIZE):
-        encoded = tokenizer(data, return_tensors='pt', padding='longest', truncation=True)
-        out = model.generate(encoded['input_ids'].cuda(), max_new_tokens=10)
+        final_prompts = []
+        for sample in data:
+            new_prompt = copy.deepcopy(prompt)
+            if PROMPT_FORMAT == 0:
+                new_prompt += f'{instructions["sentence_start"]}: {sample.strip()}\n{instructions["answer_start"]}: '
+            elif DATASET == 'snips' and PROMPT_FORMAT == 3:
+                new_prompt += f'User: {sample.strip()}\n{instructions["instruction"]} '
+            else:
+                new_prompt += f'{sample.strip()}\n{instructions["instruction"]} '
+            final_prompts.append(new_prompt)
+        encoded = tokenizer(final_prompts, return_tensors='pt', padding='longest', truncation=True).to('cuda')
+        out = model.generate(**encoded, max_new_tokens=10)
         decoded = tokenizer.batch_decode(out, skip_special_tokens=True)
-        predicted_labels = [1 if 'yes' in text.lower() else 0 for text in decoded]
+
+        print(decoded)
+        
+        predicted_labels = []
+        for text in decoded:
+            pred = parse_results(text, dataset.classes)
+            predicted_labels.append(pred)
+        print(predicted_labels)
+        print(labels)
 
         predicted.extend(predicted_labels)
         golden.extend(labels)
@@ -34,13 +84,126 @@ def run_flan_t5(dataset, model, tokenizer):
 
 
 def run_llama2(dataset, model, tokenizer):
+    instructions = dataset.instructions
+    context_samples = dataset.context_samples
+    if PROMPT_FORMAT == 0:
+        prompt = f'<s>[INST] <<SYS>>\nYou are a helpful assistant that will follow every instruction from the user\n<</SYS>>\n\n{instructions["instruction"]} [/INST] Ok, I will determine the {instructions["task_type"]} of the Sentences you will give me using only the options provided! </s>'
+        for sample in context_samples:
+            prompt += f'<s>[INST] {instructions["sentence_start"]}: {sample[0].strip()} [/INST] {instructions["answer_start"]}: {sample[1].strip()} </s>'
+    else:
+        prompt = ''
+        for sample in context_samples:
+            prompt += f'<s>[INST] {sample[0].strip()}; {instructions["instruction"]} [/INST] {sample[1].strip()} </s>'
     golden = []
     predicted = []
     for data, labels in dataset.batch_data_for_evaluation(BATCH_SIZE):
-        encoded = tokenizer(data, return_tensors='pt', padding='longest').to('cuda')
-        out = model.generate(**encoded, max_new_tokens=4, do_sample=False, num_beams=1, generation_config=generation_config)
+        final_prompts = []
+        for sample in data:
+            new_prompt = copy.deepcopy(prompt)
+            if PROMPT_FORMAT == 0:
+                new_prompt += f'<s>[INST] {instructions["sentence_start"]}: {sample.strip()} [/INST] {instructions["answer_start"]}: '
+            else:
+                prompt += f'<s>[INST] {sample.strip()}; {instructions["instruction"]} '
+            final_prompts.append(new_prompt)
+        encoded = tokenizer(final_prompts, return_tensors='pt', padding='longest').to('cuda')
+        out = model.generate(**encoded, max_new_tokens=10, do_sample=False, num_beams=1, generation_config=generation_config)
         decoded = tokenizer.batch_decode(out, skip_special_tokens=True)
-        predicted_labels = [1 if 'yes' in text.split('Answer:')[-1].lower() else 0 for text in decoded]
+
+        print(decoded)
+        
+        predicted_labels = []
+        for text in decoded:
+            text = text.split('[/INST]')[-1].lower()
+            pred = parse_results(text, dataset.classes)
+            predicted_labels.append(pred)
+        print(predicted_labels)
+        print(labels)
+
+        predicted.extend(predicted_labels)
+        golden.extend(labels)
+    return golden, predicted
+
+
+def run_mistral(dataset, model, tokenizer):
+    instructions = dataset.instructions
+    context_samples = dataset.context_samples
+    if PROMPT_FORMAT == 0:
+        messages = [
+            {'role': 'user', 'content': instructions['instruction']}, 
+            {'role': 'assistant', 'content': f'Ok, I will determine the {instructions["task_type"]} of the Sentences you will give me using only the options provided!'}
+        ]
+        for sample in context_samples:
+            messages.append({'role': 'user', 'content': sample[0]})
+            messages.append({'role': 'assistant', 'content': sample[1]})
+    else:
+        messages = []
+        for sample in context_samples:
+            messages.append({'role': 'user', 'content': f'{sample[0]} {instructions["instruction"]} '})
+            messages.append({'role': 'assistant', 'content': sample[1]})
+    golden = []
+    predicted = []
+    for data, labels in dataset.batch_data_for_evaluation(1):
+        for sample in data:
+            temp_messages = copy.deepcopy(messages)
+            if PROMPT_FORMAT == 0:
+                temp_messages.append({'role': 'user', 'content': sample})
+            else:
+                temp_messages.append({'role': 'user', 'content': f'{sample} {instructions["instruction"]} '})
+        encoded = tokenizer.apply_chat_template(temp_messages,return_tensors="pt", tokenize=True, add_generation_prompt=True).to('cuda')
+        out = model.generate(encoded, max_new_tokens=10, do_sample=False, pad_token_id=tokenizer.pad_token_id)
+        decoded = tokenizer.batch_decode(out)
+
+        print(decoded)
+        
+        predicted_labels = []
+        for text in decoded:
+            text = text.split('[/INST]')[-1]
+            pred = parse_results(text, dataset.classes)
+            predicted_labels.append(pred)
+        print(predicted_labels)
+        print(labels)
+
+        predicted.extend(predicted_labels)
+        golden.extend(labels)
+    return golden, predicted
+
+def run_zephyr(dataset, model, tokenizer):
+    instructions = dataset.instructions
+    context_samples = dataset.context_samples
+    if PROMPT_FORMAT == 0:
+        messages = [
+            {'role': 'user', 'content': instructions['instruction']}, 
+        ]
+        for sample in context_samples:
+            messages.append({'role': 'user', 'content': sample[0]})
+            messages.append({'role': 'assistant', 'content': sample[1]})
+    else:
+        messages = []
+        for sample in context_samples:
+            messages.append({'role': 'user', 'content': f'{sample[0]} {instructions["instruction"]} '})
+            messages.append({'role': 'assistant', 'content': sample[1]})
+    golden = []
+    predicted = []
+    for data, labels in dataset.batch_data_for_evaluation(1):
+        for sample in data:
+            temp_messages = copy.deepcopy(messages)
+            if PROMPT_FORMAT == 0:
+                temp_messages.append({'role': 'user', 'content': sample})
+            else:
+                temp_messages.append({'role': 'user', 'content': f'{sample} {instructions["instruction"]} '})
+        encoded = tokenizer.apply_chat_template(temp_messages,return_tensors="pt", tokenize=True, add_generation_prompt=True).to('cuda')
+        out = model.generate(encoded, max_new_tokens=10, do_sample=False, pad_token_id=tokenizer.pad_token_id)
+        decoded = tokenizer.batch_decode(out)
+
+        print(decoded)
+        
+        predicted_labels = []
+        for text in decoded:
+            text = text.split('<|assistant|>')[-1]
+            pred = parse_results(text, dataset.classes)
+            predicted_labels.append(pred)
+        print(predicted_labels)
+        print(labels)
 
         predicted.extend(predicted_labels)
         golden.extend(labels)
@@ -117,7 +280,7 @@ def run_chatgpt(dataset, investigation_path):
 
 
 
-def prompt_icl_experiment(randomness_factor_seeds, model, tokenizer, experiment=EXPERIMENT_TYPE, investigation_path=None):
+def prompt_icl_experiment(randomness_factor_seeds, model, tokenizer, experiment='icl', investigation_path=None):
     if 'icl' in experiment:
         dataset_constr = SimilarityICLDataset if experiment == 'icl_similarity' else ICLDataset 
         dataset = dataset_constr(
@@ -133,7 +296,8 @@ def prompt_icl_experiment(randomness_factor_seeds, model, tokenizer, experiment=
             num_classes=args.num_classes,
             choice_seed=randomness_factor_seeds['sample_choice'],
             order_seed=randomness_factor_seeds['sample_order'],
-            model_name=MODEL
+            model_name=MODEL,
+            prompt_format=PROMPT_FORMAT
         )
     else:
         dataset = PromptDataset(
@@ -145,7 +309,8 @@ def prompt_icl_experiment(randomness_factor_seeds, model, tokenizer, experiment=
             label_seed=randomness_factor_seeds['label_choice'],
             device=device,
             full_test=FULL_TEST,
-            model_name=MODEL
+            model_name=MODEL,
+            prompt_format=PROMPT_FORMAT
         )
 
     torch.manual_seed(randomness_factor_seeds['model_randomness'])    
@@ -213,13 +378,10 @@ def instruction_tuning_experiment(randomness_factor_seeds, model_name, tokenizer
 
 
 def ft_experiment(randomness_factor_seeds):
-    tokenizer = AutoTokenizer.from_pretrained(f'{MODEL}-{MODEL_SIZE}{"-uncased" if MODEL == "bert" else ""}', return_dict=False)
-    if args.dataset == 'sst2':
-        MAX_LEN = 100
-    elif args.dataset == 'boolq':
-        MAX_LEN = 200
+    if 'lora' in MODEL:
+        tokenizer = AutoTokenizer.from_pretrained(f'{MODEL.split("_")[1] if "lora" in MODEL else MODEL}-{MODEL_SIZE}{"-uncased" if MODEL.split("_")[1] == "bert" else ""}', return_dict=False)
     else:
-        MAX_LEN = 110
+        tokenizer = AutoTokenizer.from_pretrained(f'{MODEL}-{MODEL_SIZE}{"-uncased" if MODEL == "bert" else ""}', return_dict=False)
     dataset = FineTuningDataset(
         dataset_name=DATASET,
         train_size=args.train_size,
@@ -310,12 +472,6 @@ def meta_learning_experiment(randomness_factor_seeds):
         choice_seed=randomness_factor_seeds['sample_choice'],
         order_seed=randomness_factor_seeds['sample_order'],
     )
-    if args.dataset == 'sst2':
-        MAX_LEN = 100
-    elif args.dataset == 'boolq':
-        MAX_LEN = 200
-    else:
-        MAX_LEN = 110
     base_model = BASE_MODEL_MAPPING[args.model](
         sentence_length=MAX_LEN,
         embedding_dim=768,
@@ -367,16 +523,18 @@ parser.add_argument('--regenerate', default=0, type=int, help='Whether to calcul
 # General training args
 parser.add_argument('--factor', default='golden_model', type=str, choices=['golden_model', 'data_split', 'label_choice', 'sample_choice', 'sample_order', 'model_initialisation', 'model_randomness'], help='Randomness factor to investigate.')
 parser.add_argument('--num_shots', default=4, type=int, help='Number of samples to use as in-context examples in in-context learning or in different tasks in meta-learning.')
-parser.add_argument('--dataset', default='sst2', type=str, choices=['sst2', 'mrpc', 'cola', 'rte', 'boolq'], help='Dataset to use for investigation.')
+parser.add_argument('--dataset', default='sst2', type=str, choices=['sst2', 'mrpc', 'cola', 'rte', 'boolq', 'trec', 'ag_news', 'db_pedia', 'snips'], help='Dataset to use for investigation.')
 parser.add_argument('--num_classes', default=2, type=int, help='Number of classes in dataset.')
 parser.add_argument('--batch_size', default=64, type=int)
 parser.add_argument('--train_size', default=0.8, type=float)
 parser.add_argument('--num_labelled', default=1000, type=int)
 parser.add_argument('--num_labelled_test', default=1000, type=int)
-parser.add_argument('--model', default='flan-t5', type=str, choices=['bert', 'roberta', 'flan-t5', 'llama2', 'chatgpt', 'protonet', 'maml', 'fomaml', 'reptile'])
+parser.add_argument('--model', default='flan-t5', type=str, choices=['bert', 'roberta', 'flan-t5', 'llama2', 'chatgpt', 'protonet', 'maml', 'fomaml', 'reptile', 'mistral', 'zephyr', 'lora_bert', 'lora_roberta'])
 parser.add_argument('--model_size', default='base', type=str, choices=['base'])
 parser.add_argument('--lr', default=1e-5, type=float)
 parser.add_argument('--num_epochs', default=5, type=int, help='Total number of epochs to train for')
+parser.add_argument('--max_len', default=20, type=int, help='Maximal length of input for fine-tuning experiments')
+parser.add_argument('--prompt_format', default=0, type=int, help='Which prompt format to use')
 # Seeds
 parser.add_argument('--mitigation_seed', default=42, type=int, help='Seed for generating seeds for investigation')
 parser.add_argument('--investigation_seed', default=27, type=int, help='Seed for generating seeds for investigation')
@@ -398,22 +556,30 @@ args = parser.parse_args()
 device = torch.device('cuda')
 FT_MODELS = {
     'bert':  BERTBase,
-    'roberta':  RoBERTaBase
+    'roberta':  RoBERTaBase,
+    'lora_bert': LoRABERTBase,
+    'lora_roberta': LoRARoBERTaBase,
 }
 
 ICL_MODELS = {
     'flan-t5_base': 'google/flan-t5-base',
-    'llama2_base': "meta-llama/Llama-2-13b-chat-hf",
+    'llama2_base': 'meta-llama/Llama-2-13b-chat-hf',
+    'mistral_base': 'mistralai/Mistral-7B-Instruct-v0.1',
+    'zephyr_base': 'HuggingFaceH4/zephyr-7b-alpha'
 }
 
 ICL_MODEL_RUN = {
     'flan-t5_base': run_flan_t5,
     'llama2_base': run_llama2,
     'chatgpt_base': run_chatgpt,
+    'mistral_base': run_mistral,
+    'zephyr_base': run_zephyr,
 }
 
 EXPERIMENT_TYPE = args.experiment_type
 FULL_TEST = args.full_test == 1
+MAX_LEN = args.max_len
+PROMPT_FORMAT = args.prompt_format
 
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
@@ -429,7 +595,7 @@ MODEL = args.model
 MODEL_SIZE = args.model_size
 FACTOR = args.factor
 DATASET = args.dataset
-RESULTS_PATH = os.path.join('results', f'{args.experiment_name}_{EXPERIMENT_TYPE}_{MODEL}_{MODEL_SIZE}', args.configuration_name, DATASET, FACTOR)
+RESULTS_PATH = os.path.join('results', f'{args.experiment_name}', f'{EXPERIMENT_TYPE}_{MODEL}_{MODEL_SIZE}', args.configuration_name, DATASET, FACTOR)
 if not os.path.exists(RESULTS_PATH):
     os.makedirs(RESULTS_PATH)
 
@@ -480,10 +646,10 @@ elif EXPERIMENT_TYPE in ('icl', 'prompting', 'icl_similarity'):
 
     if MODEL == 'llama2':
         access_token = os.environ['HUGGINGFACE_TOKEN']
-        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, use_auth_token=access_token)
+        tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True, token=access_token)
         
         tokenizer.padding_side = 'left'
-        model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", load_in_4bit=True, use_auth_token=access_token)
+        model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", load_in_4bit=True, token=access_token)
         if tokenizer.pad_token is None:
             tokenizer.add_special_tokens({'pad_token': '[PAD]'})
             model.resize_token_embeddings(len(tokenizer))
@@ -491,7 +657,14 @@ elif EXPERIMENT_TYPE in ('icl', 'prompting', 'icl_similarity'):
         generation_config.num_beams = 1
         generation_config.max_new_tokens = 4
         generation_config.do_sample = False
+        generation_config.temperature = None
         model.eval()
+    elif MODEL in ['mistral', 'zephyr']:
+        model = AutoModelForCausalLM.from_pretrained(model_name, load_in_4bit=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.padding_side = 'left'
+        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        model.resize_token_embeddings(len(tokenizer))
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.padding_side = 'left'
@@ -499,7 +672,10 @@ elif EXPERIMENT_TYPE in ('icl', 'prompting', 'icl_similarity'):
     model.eval()
 
 else:
-    model_name = f'{MODEL}-{MODEL_SIZE}{"-uncased" if MODEL == "bert" else ""}'
+    if 'lora' in MODEL:
+        model_name = f'{MODEL.split("_")[1]}-{MODEL_SIZE}{"-uncased" if MODEL.split("_")[1] == "bert" else ""}'
+    else:
+        model_name = f'{MODEL}-{MODEL_SIZE}{"-uncased" if MODEL == "bert" else ""}'
 
 randomness_factors = ['data_split', 'label_choice', 'sample_choice', 'sample_order', 'model_initialisation', 'model_randomness']
 
@@ -537,6 +713,7 @@ for mit_idx, mitigation_seed in enumerate(mitigation_seeds):
         else:
             golden, predicted = prompt_icl_experiment(randomness_factor_seeds, model, tokenizer, EXPERIMENT_TYPE)
         
+        print(np.mean(np.array(golden) == np.array(predicted)))
         results = copy.deepcopy(randomness_factor_seeds)
         results['real'] = golden
         results['predicted'] = predicted

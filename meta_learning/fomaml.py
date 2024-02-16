@@ -1,4 +1,4 @@
-from maml import MAML
+from .maml import MAML
 import torch.nn.functional as F
 
 
