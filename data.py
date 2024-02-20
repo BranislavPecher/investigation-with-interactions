@@ -255,7 +255,7 @@ class TextDataset(Dataset):
 
             torch.set_rng_state(old_state)
 
-    def __prepare_dataset_keywords(self):
+    def prepare_dataset_keywords(self):
         options = ''
         for idx, text in enumerate(self.classes):
             options += f' {idx + 1}) {text}'
@@ -422,7 +422,7 @@ class ICLDataset(TextDataset):
         return texts, targets
 
     def __prepare_prompt(self, texts, targets):
-        instruction, sentence_start, answer_start, task_type = self.__prepare_dataset_keywords()
+        instruction, sentence_start, answer_start, task_type = self.prepare_dataset_keywords()
         instructions = {
             'instruction': instruction,
             'sentence_start': sentence_start,
@@ -513,21 +513,22 @@ class PromptDataset(TextDataset):
         start_idx = 0
         end_idx = batch
 
-        while start_idx < len(self.prompts):
-            data = self.prompts[start_idx : end_idx]
-            labels = self.targets[start_idx : end_idx]
+        while start_idx < len(self.test_text):
+            data = self.test_text[start_idx : end_idx]
+            labels = self.test_targets[start_idx : end_idx]
 
             yield data, labels
 
             start_idx = end_idx
             end_idx += batch
-    
+
+
     def __len__(self):
         return len(self.test_text)
 
     
     def __prepare_prompt(self):
-        instruction, sentence_start, answer_start, task_type = self.__prepare_dataset_keywords()
+        instruction, sentence_start, answer_start, task_type = self.prepare_dataset_keywords()
         instructions = {
             'instruction': instruction,
             'sentence_start': sentence_start,
@@ -568,7 +569,7 @@ class InstructionTuningDataset(ICLDataset):
         return len(self.prompts)
 
     def __prepare_prompt(self, texts, targets):
-        instruction, sentence_start, answer_start, task_type = self.__prepare_dataset_keywords()
+        instruction, sentence_start, answer_start, task_type = self.prepare_dataset_keywords()
         instructions = {
             'instruction': instruction,
             'sentence_start': sentence_start,
