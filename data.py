@@ -330,7 +330,7 @@ class TextDataset(Dataset):
             task_type = 'topic'
         elif self.dataset_name == 'snips':
             if prompt == 0:
-                instruction = f'Determine topic of the sentence using following options:{options}'
+                instruction = f'Determine intent of the sentence using following options:{options}'
             elif prompt == 1:
                 instruction = 'Intent?'
             elif prompt == 2:
@@ -339,7 +339,6 @@ class TextDataset(Dataset):
                 instruction = 'User requested'
             else:
                 raise NotImplemented
-            instruction = f'Determine intent of the sentence using following options:{options}'
             sentence_start = 'Sentence'
             answer_start = 'Answer'
             task_type = 'intent'
