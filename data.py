@@ -94,7 +94,6 @@ class TextDataset(Dataset):
                 self.classes = ['terrible', 'great']
             else:
                 raise NotImplemented
-            # self.classes = ['No', 'Yes']
             return data.sentence.tolist(), data.label.tolist()
         elif self.dataset_name == 'cola':
             print(f'Using cola dataset')

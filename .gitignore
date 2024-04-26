@@ -1,4 +1,7 @@
 results/*
 scripts/*
 visualisations/*
+a_new_result/*
+backup/*
+pickled/*
 __pycache__
