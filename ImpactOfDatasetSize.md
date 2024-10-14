@@ -26,8 +26,8 @@ To get the results from our paper, the investigation needs to be done for each m
 - Datasets: sst2, mrpc, boolq, trec, ag_news, snips, db_pedia
 - Models:
     - (experiment_type) finetuning: bert, roberta
-    - (experiment_type) prompting: flan-t5, llama2, chatgpt, mistral, zephyr
-    - (experiment_type) icl: flan-t5, llama2, chatgpt, mistral, zephyr
+    - (experiment_type) prompting: flan-t5, llama2, llama3, chatgpt, mistral, zephyr
+    - (experiment_type) icl: flan-t5, llama2, llama3, chatgpt, mistral, zephyr
     - (experiment_type) instruction_tuning_steps: flan-t5, mistral, zephyr
 - The number of mitigations runs for all models should be set to 20 (except for chatgpt where it should be just 10).
 
